@@ -126,3 +126,62 @@ PENTING:
       `✅ Successfully generated ${questions.length} questions from OpenAI`
     );
     return questions;
+    } catch (error) {
+    // Jika OpenAI gagal (error, quota habis, dll), gunakan fallback questions
+    console.error("❌ Error generating quiz:", error.message);
+    console.log("⚠️ Using fallback questions instead");
+    // Fallback questions: 10 soal default jika OpenAI gagal
+    return [
+      {
+        question: "Apa ibu kota Indonesia?",
+        options: ["A. Jakarta", "B. Bandung", "C. Surabaya", "D. Medan"],
+        correctAnswer: "A",
+      },
+      {
+        question: "Berapa hasil dari 5 + 7?",
+        options: ["A. 10", "B. 11", "C. 12", "D. 13"],
+        correctAnswer: "C",
+      },
+      {
+        question: "Siapa presiden pertama Indonesia?",
+        options: ["A. Soekarno", "B. Soeharto", "C. BJ Habibie", "D. Megawati"],
+        correctAnswer: "A",
+      },
+      {
+        question: "Planet terdekat dengan matahari?",
+        options: ["A. Venus", "B. Merkurius", "C. Mars", "D. Bumi"],
+        correctAnswer: "B",
+      },
+      {
+        question: "Berapa jumlah pemain sepak bola per tim?",
+        options: ["A. 9", "B. 10", "C. 11", "D. 12"],
+        correctAnswer: "C",
+      },
+      {
+        question: "Gas apa yang kita hirup untuk bernafas?",
+        options: ["A. Nitrogen", "B. Oksigen", "C. Karbon", "D. Hidrogen"],
+        correctAnswer: "B",
+      },
+      {
+        question: "Tahun kemerdekaan Indonesia?",
+        options: ["A. 1942", "B. 1944", "C. 1945", "D. 1946"],
+        correctAnswer: "C",
+      },
+      {
+        question: "Berapa hasil dari 8 x 7?",
+        options: ["A. 54", "B. 56", "C. 58", "D. 60"],
+        correctAnswer: "B",
+      },
+      {
+        question: "Organ tubuh yang memompa darah?",
+        options: ["A. Paru-paru", "B. Jantung", "C. Hati", "D. Ginjal"],
+        correctAnswer: "B",
+      },
+      {
+        question: "Olahraga yang menggunakan raket dan kok?",
+        options: ["A. Tenis", "B. Badminton", "C. Squash", "D. Ping Pong"],
+        correctAnswer: "B",
+      },
+    ];
+  }
+}
