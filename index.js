@@ -154,3 +154,24 @@ const rooms = new Map();
 function normalize(text) {
   return (text || "").toString().trim().toLowerCase();
 }
+
+
+function getOrCreateRoom(roomCode) {
+  if (!rooms.has(roomCode)) {
+    rooms.set(roomCode, {
+      players: new Map(),
+      roundIndex: 0,
+      roundActive: false,
+      roundDeadline: 0,
+      roundStartTime: 0,
+      timerInterval: null,
+      gameStarted: false,
+      gameEnded: false,
+      theme: null,
+      questions: [],
+      quizReady: false,
+      roomCreator: null,
+    });
+  }
+  return rooms.get(roomCode);
+}
