@@ -130,5 +130,72 @@ function endRound(roomCode) {
     // Update state players (gameEnded = true)
     emitPlayersState(roomCode);
   }
+
+  
 }
 
+// FAWWAZ 1 ====================
+
+  // ============================================
+  // EVENT: READY (player siap mulai game)
+  // ============================================
+  // Handler saat player klik tombol "SIAP"
+  socket.on("ready", () => {
+    if (!userRoom) return;
+    const room = rooms.get(userRoom);
+    if (!room) return;
+
+    // Validasi: quiz harus sudah ready (sudah di-generate)
+    if (!room.quizReady) {
+      socket.emit("readyError", {
+        message: "Tunggu quiz di-generate terlebih dahulu",
+      });
+      return;
+    }
+
+    const player = room.players.get(socket.id);
+    if (!player) return;
+
+    // Toggle status ready player (klik lagi untuk unready)
+    player.ready = !player.ready;
+    emitPlayersState(userRoom); // Update status ready ke semua player
+
+    // Jika semua player sudah ready, mulai game
+    if (checkAllReady(userRoom) && !room.gameStarted && room.quizReady) {
+      room.gameStarted = true;
+      room.gameEnded = false;
+      emitPlayersState(userRoom); // Update gameStarted = true
+      io.to(userRoom).emit("gameStarting"); // Notifikasi "game dimulai..."
+      setTimeout(() => startRound(userRoom, 0), 2000); // Delay 2 detik lalu mulai soal pertama
+    }
+  });
+
+  // ============================================
+  // EVENT: GUESS (player menjawab soal)
+  // ============================================
+  // Handler saat player memilih jawaban
+  socket.on("guess", ({ answer }) => {
+    if (!userRoom) return;
+    const room = rooms.get(userRoom);
+    // Validasi: room harus ada dan round harus aktif
+    if (!room || !room.roundActive) return;
+
+    const player = room.players.get(socket.id);
+    if (!player) return;
+
+    // Mark player sudah jawab (untuk auto-advance)
+    if (!player.hasAnswered) {
+      player.hasAnswered = true;
+    }
+
+    // Jika player sudah jawab benar di round ini, ignore jawaban berikutnya
+    if (player.lastCorrectRound === room.roundIndex) {
+      socket.emit("guessResult", { correct: true, already: true, points: 0 });
+
+      // Cek apakah semua player sudah jawab (untuk auto-advance)
+      if (checkAllAnswered(userRoom)) {
+        setTimeout(() => endRound(userRoom), 1000); // Delay 1s untuk feedback
+      }
+      return;
+    }
+  });
