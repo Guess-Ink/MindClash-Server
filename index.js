@@ -428,9 +428,19 @@ io.on("connection", (socket) => {
 
     // Cek kapasitas room (maksimal 10 pemain)
     const room = getOrCreateRoom(code);
+    
+    // Validasi 1: Room penuh (10 player)
     if (room.players.size >= MAX_PLAYERS_PER_ROOM) {
       socket.emit("joinError", {
         message: "Room penuh! Maksimal 10 pemain per room.",
+      });
+      return;
+    }
+
+    // Validasi 2: Game sudah berjalan (tidak bisa join saat game aktif)
+    if (room.gameStarted && !room.gameEnded) {
+      socket.emit("joinError", {
+        message: "Game sedang berjalan! Tunggu hingga game selesai untuk bergabung.",
       });
       return;
     }
@@ -453,28 +463,9 @@ io.on("connection", (socket) => {
       ready: false, // Belum ready
     });
 
-  
-
     // Kirim konfirmasi join ke client dengan info isCreator
     const isCreator = room.roomCreator === socket.id;
     socket.emit("joined", { id: socket.id, roomCode: code, isCreator });
-
-    // Jika game sedang berjalan, kirim state soal saat ini ke player baru
-    if (room.gameStarted) {
-      const q = currentQuestion(room);
-      if (q) {
-        // Kirim soal saat ini
-        socket.emit("round", {
-          index: room.roundIndex + 1,
-          total: room.questions.length,
-          question: q.question,
-          options: q.options,
-        });
-        // Kirim sisa waktu timer
-        const msLeft = Math.max(0, room.roundDeadline - Date.now());
-        socket.emit("timer", Math.ceil(msLeft / 1000));
-      }
-    }
 
     // Kirim scoreboard dan players state terbaru
     emitScoreboard(code);
