@@ -571,7 +571,12 @@ io.on("connection", (socket) => {
 
     // Jika player sudah jawab benar di round ini, ignore jawaban berikutnya
     if (player.lastCorrectRound === room.roundIndex) {
-      socket.emit("guessResult", { correct: true, already: true, points: 0 });
+      socket.emit("guessResult", { 
+        correct: true, 
+        already: true, 
+        points: 0,
+        correctAnswer: q.correctAnswer 
+      });
 
       // Cek apakah semua player sudah jawab (untuk auto-advance)
       if (checkAllAnswered(userRoom)) {
@@ -601,12 +606,17 @@ io.on("connection", (socket) => {
         correct: true,
         points: points,
         elapsedSeconds: elapsedSeconds,
+        correctAnswer: q.correctAnswer,
       });
 
       emitScoreboard(userRoom); // Update scoreboard ke semua player
     } else {
-      // Jawaban salah
-      socket.emit("guessResult", { correct: false, points: 0 });
+      // Jawaban salah - kirim jawaban yang benar
+      socket.emit("guessResult", { 
+        correct: false, 
+        points: 0,
+        correctAnswer: q.correctAnswer 
+      });
     }
 
     // Cek apakah semua player sudah jawab (auto-advance feature)
