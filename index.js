@@ -1,357 +1,262 @@
-require("dotenv").config();
-const express = require("express");
-const { createServer } = require("node:http");
-const { Server } = require("socket.io");
-const OpenAI = require("openai");
+// ============= FAWWAZ 1 ==========================
 
-const app = express();
-const server = createServer(app);
-
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-  },
-});
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-app.get("/", (req, res) => {
-  res.send("<h1>Quiz Game Server OK</h1>");
-});
-
-const QUIZ_THEMES = {
-  OLAHRAGA: "Olahraga",
-  MATEMATIKA: "Matematika",
-  SEJARAH: "Sejarah Umum",
-  IPA: "Ilmu Pengetahuan Alam",
-};
-
-const ROUND_DURATION_MS = 30_000;
-const MAX_PLAYERS_PER_ROOM = 10;
-
-function calculatePoints(elapsedSeconds) {
-  if (elapsedSeconds < 5) return 10; 
-  if (elapsedSeconds < 10) return 8; 
-  if (elapsedSeconds < 15) return 6; 
-  if (elapsedSeconds < 20) return 4;
-  if (elapsedSeconds < 30) return 2;
-  return 0;
-}
-
-async function generateQuizQuestions(theme) {
-  console.log(`🤖 Generating quiz for theme: ${theme}`);
-  console.log(`🔑 API Key exists: ${!!process.env.OPENAI_API_KEY}`);
-
-  try {
-    const prompt = `Buatkan 10 soal quiz pilihan ganda tentang ${theme} dengan tingkat kesulitan menengah dalam bahasa Indonesia. 
-Format response harus STRICT JSON array dengan struktur:
-[
-  {
-    "question": "pertanyaan",
-    "options": ["A. jawaban", "B. jawaban", "C. jawaban", "D. jawaban"],
-    "correctAnswer": "A"
-  }
-]
-
-PENTING: 
-- Response harus pure JSON array, tidak ada teks tambahan
-- Setiap soal memiliki 4 pilihan (A, B, C, D)
-- correctAnswer hanya huruf A, B, C, atau D
-- Pertanyaan harus jelas dan edukatif`;
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a quiz generator. Always respond with valid JSON array only, no markdown or extra text.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.7,
-      max_tokens: 2000,
-    });
-
-    const content = completion.choices[0].message.content.trim();
-
-    const jsonContent = content
-      .replace(/```json\n?/g, "")
-      .replace(/```\n?/g, "")
-      .trim();
-    const questions = JSON.parse(jsonContent);
-
-    console.log(
-      `✅ Successfully generated ${questions.length} questions from OpenAI`
-    );
-    return questions;
-  } catch (error) {
-    console.error("❌ Error generating quiz:", error.message);
-    console.log("⚠️ Using fallback questions instead");
-    return [
-      {
-        question: "Apa ibu kota Indonesia?",
-        options: ["A. Jakarta", "B. Bandung", "C. Surabaya", "D. Medan"],
-        correctAnswer: "A",
-      },
-      {
-        question: "Berapa hasil dari 5 + 7?",
-        options: ["A. 10", "B. 11", "C. 12", "D. 13"],
-        correctAnswer: "C",
-      },
-      {
-        question: "Siapa presiden pertama Indonesia?",
-        options: ["A. Soekarno", "B. Soeharto", "C. BJ Habibie", "D. Megawati"],
-        correctAnswer: "A",
-      },
-      {
-        question: "Planet terdekat dengan matahari?",
-        options: ["A. Venus", "B. Merkurius", "C. Mars", "D. Bumi"],
-        correctAnswer: "B",
-      },
-      {
-        question: "Berapa jumlah pemain sepak bola per tim?",
-        options: ["A. 9", "B. 10", "C. 11", "D. 12"],
-        correctAnswer: "C",
-      },
-      {
-        question: "Gas apa yang kita hirup untuk bernafas?",
-        options: ["A. Nitrogen", "B. Oksigen", "C. Karbon", "D. Hidrogen"],
-        correctAnswer: "B",
-      },
-      {
-        question: "Tahun kemerdekaan Indonesia?",
-        options: ["A. 1942", "B. 1944", "C. 1945", "D. 1946"],
-        correctAnswer: "C",
-      },
-      {
-        question: "Berapa hasil dari 8 x 7?",
-        options: ["A. 54", "B. 56", "C. 58", "D. 60"],
-        correctAnswer: "B",
-      },
-      {
-        question: "Organ tubuh yang memompa darah?",
-        options: ["A. Paru-paru", "B. Jantung", "C. Hati", "D. Ginjal"],
-        correctAnswer: "B",
-      },
-      {
-        question: "Olahraga yang menggunakan raket dan kok?",
-        options: ["A. Tenis", "B. Badminton", "C. Squash", "D. Ping Pong"],
-        correctAnswer: "B",
-      },
-    ];
-  }
-}
-
-const rooms = new Map();
-
-function normalize(text) {
-  return (text || "").toString().trim().toLowerCase();
-}
-
-
-function getOrCreateRoom(roomCode) {
-  if (!rooms.has(roomCode)) {
-    rooms.set(roomCode, {
-      players: new Map(), 
-      roundIndex: 0,
-      roundActive: false,
-      roundDeadline: 0,
-      roundStartTime: 0,
-      timerInterval: null,
-      gameStarted: false,
-      gameEnded: false,
-      theme: null,
-      questions: [],
-      quizReady: false,
-      roomCreator: null,
-    });
-  }
-  return rooms.get(roomCode);
-}
-
-function currentQuestion(room) {
-  return room.questions[room.roundIndex] || null;
-}
-
-function emitScoreboard(roomCode) {
-  const room = rooms.get(roomCode);
-  if (!room) return;
-  const scoreboard = Array.from(room.players.values())
-    .map((p) => ({ id: p.id, nickname: p.nickname, score: p.score }))
-    .sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname));
-
-  io.to(roomCode).emit("scoreboard", scoreboard);
-}
-
+// Fungsi untuk mengirim state players (list pemain, status ready, dll) ke semua player di room
 function emitPlayersState(roomCode) {
   const room = rooms.get(roomCode);
   if (!room) return;
+  // Buat array data players dengan info id, nickname, dan status ready
   const players = Array.from(room.players.values()).map((p) => ({
     id: p.id,
     nickname: p.nickname,
-    ready: p.ready || false,
+    ready: p.ready || false, // Status ready untuk mulai game
   }));
-
+  // Kirim state ke semua client di room
   io.to(roomCode).emit("playersState", {
-    players,
-    gameStarted: room.gameStarted,
-    gameEnded: room.gameEnded,
-    theme: room.theme,
-    quizReady: room.quizReady,
-    isCreator: false,
+    players, // List semua player
+    gameStarted: room.gameStarted, // Apakah game sudah mulai
+    gameEnded: room.gameEnded, // Apakah game sudah selesai
+    theme: room.theme, // Tema quiz yang dipilih
+    quizReady: room.quizReady, // Apakah quiz sudah di-generate
+    isCreator: false, // Default false, akan diset per-socket di handler join
   });
 }
 
+// ============== FAWWAZ 2 ==========================
+
+// ============================================DAY 1 ============================================
+
+
+// ============================================
+// ROUND MANAGEMENT
+// ============================================
+
+// Fungsi untuk broadcast soal baru ke semua player di room
 function broadcastRoundStart(roomCode) {
+    
   const room = rooms.get(roomCode);
   if (!room) return;
   const q = currentQuestion(room);
   if (!q) return;
-
+  // Kirim data soal ke semua player
   io.to(roomCode).emit("round", {
-    index: room.roundIndex + 1,
-    total: room.questions.length,
-    question: q.question,
-    options: q.options,
+    index: room.roundIndex + 1, // Nomor soal (1-10)
+    total: room.questions.length, // Total soal (10)
+    question: q.question, // Text pertanyaan
+    options: q.options, // Array pilihan A, B, C, D
   });
-  
+  // Kirim timer countdown
   const msLeft = Math.max(0, room.roundDeadline - Date.now());
   io.to(roomCode).emit("timer", Math.ceil(msLeft / 1000));
 }
 
+// Fungsi untuk memulai round/soal baru
 function startRound(roomCode, index) {
   const room = rooms.get(roomCode);
   if (!room) return;
 
-  room.roundIndex = index;
-  room.roundActive = true;
-  room.roundStartTime = Date.now();
-  room.roundDeadline = room.roundStartTime + ROUND_DURATION_MS;
+  // Set state untuk round baru
+  room.roundIndex = index; // Index soal (0-9)
+  room.roundActive = true; // Tandai round aktif
+  room.roundStartTime = Date.now(); // Catat waktu mulai (untuk hitung kecepatan jawab)
+  room.roundDeadline = room.roundStartTime + ROUND_DURATION_MS; // Deadline = sekarang + 30 detik
 
+  // Reset flag per-round untuk setiap player
   for (const p of room.players.values()) {
     if (typeof p.lastCorrectRound !== "number") p.lastCorrectRound = -1;
-    p.hasAnswered = false;
+    p.hasAnswered = false; // Track apakah user sudah jawab di round ini (untuk auto-advance)
   }
 
+  // Kirim soal ke semua player
   broadcastRoundStart(roomCode);
-
+  // Kirim scoreboard terbaru
   emitScoreboard(roomCode);
 
+  // Setup countdown timer (update setiap 1 detik)
   clearInterval(room.timerInterval);
   room.timerInterval = setInterval(() => {
     const msLeft = Math.max(0, room.roundDeadline - Date.now());
     const secondsLeft = Math.ceil(msLeft / 1000);
-    io.to(roomCode).emit("timer", secondsLeft);
+    io.to(roomCode).emit("timer", secondsLeft); // Kirim sisa waktu ke client
     if (msLeft <= 0) {
-      endRound(roomCode);
+      endRound(roomCode); // Waktu habis, akhiri round
     }
   }, 1000);
 }
 
+// Fungsi untuk cek apakah semua pemain sudah jawab (untuk auto-advance ke soal berikutnya)
 function checkAllAnswered(roomCode) {
   const room = rooms.get(roomCode);
   if (!room || room.players.size === 0) return false;
 
+  // Loop semua player, jika ada yang belum jawab return false
   for (const p of room.players.values()) {
     if (!p.hasAnswered) return false;
   }
-  return true;
+  return true; // Semua sudah jawab
 }
 
+// Fungsi untuk mengakhiri round saat ini
 function endRound(roomCode) {
   const room = rooms.get(roomCode);
   if (!room) return;
 
+  // Stop timer countdown
   clearInterval(room.timerInterval);
   room.timerInterval = null;
   room.roundActive = false;
 
   const next = room.roundIndex + 1;
   if (next < room.questions.length) {
+    // Masih ada soal berikutnya, delay 1.5 detik lalu lanjut
     setTimeout(() => startRound(roomCode, next), 1500);
   } else {
+    // Sudah soal terakhir, game selesai
     room.gameEnded = true;
     room.gameStarted = false;
 
+    // Buat final scoreboard dan sort by score
     const finalScoreboard = Array.from(room.players.values())
       .map((p) => ({ id: p.id, nickname: p.nickname, score: p.score }))
       .sort(
         (a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname)
       );
 
+    // Kirim game over dengan final leaderboard
     io.to(roomCode).emit("gameOver", {
       totalRounds: room.questions.length,
       finalScoreboard: finalScoreboard,
     });
 
+    // Update state players (gameEnded = true)
     emitPlayersState(roomCode);
   }
+
+  
 }
 
-function restartGame(roomCode) {
-  const room = rooms.get(roomCode);
-  if (!room) return;
+// FAWWAZ 1 ====================
 
-  room.gameStarted = false;
-  room.gameEnded = false;
-  room.roundIndex = 0;
-  room.quizReady = false;
-  room.theme = null;
-  room.questions = [];
+  // ============================================
+  // EVENT: READY (player siap mulai game)
+  // ============================================
+  // Handler saat player klik tombol "SIAP"
+  socket.on("ready", () => {
+    if (!userRoom) return;
+    const room = rooms.get(userRoom);
+    if (!room) return;
 
-  for (const p of room.players.values()) {
-    p.score = 0;
-    p.lastCorrectRound = -1;
-    p.ready = false;
-  }
-
-  emitScoreboard(roomCode);
-  emitPlayersState(roomCode);
-}
-
-function checkAllReady(roomCode) {
-  const room = rooms.get(roomCode);
-  if (!room || room.players.size === 0) return false;
-
-  for (const p of room.players.values()) {
-    if (!p.ready) return false;
-  }
-  return true;
-}
-
-io.on("connection", (socket) => {
-  console.log("a user connected", socket.id);
-  let userRoom = null;
-
-  socket.on("join", ({ nickname, roomCode }) => {
-    const name = (nickname || "").toString().trim() || "Pemain";
-    const code = (roomCode || "").toString().trim().toUpperCase() || "DEFAULT";
-
-    const room = getOrCreateRoom(code);
-    if (room.players.size >= MAX_PLAYERS_PER_ROOM) {
-      socket.emit("joinError", {
-        message: "Room penuh! Maksimal 10 pemain per room.",
+    // Validasi: quiz harus sudah ready (sudah di-generate)
+    if (!room.quizReady) {
+      socket.emit("readyError", {
+        message: "Tunggu quiz di-generate terlebih dahulu",
       });
       return;
     }
 
-    if (room.players.size === 0) {
-      room.roomCreator = socket.id;
+    const player = room.players.get(socket.id);
+    if (!player) return;
+
+    // Toggle status ready player (klik lagi untuk unready)
+    player.ready = !player.ready;
+    emitPlayersState(userRoom); // Update status ready ke semua player
+
+    // Jika semua player sudah ready, mulai game
+    if (checkAllReady(userRoom) && !room.gameStarted && room.quizReady) {
+      room.gameStarted = true;
+      room.gameEnded = false;
+      emitPlayersState(userRoom); // Update gameStarted = true
+      io.to(userRoom).emit("gameStarting"); // Notifikasi "game dimulai..."
+      setTimeout(() => startRound(userRoom, 0), 2000); // Delay 2 detik lalu mulai soal pertama
+    }
+  });
+
+  // ============================================
+  // EVENT: GUESS (player menjawab soal)
+  // ============================================
+  // Handler saat player memilih jawaban
+  socket.on("guess", ({ answer }) => {
+    if (!userRoom) return;
+    const room = rooms.get(userRoom);
+    // Validasi: room harus ada dan round harus aktif
+    if (!room || !room.roundActive) return;
+
+    const player = room.players.get(socket.id);
+    if (!player) return;
+
+    // Mark player sudah jawab (untuk auto-advance)
+    if (!player.hasAnswered) {
+      player.hasAnswered = true;
     }
 
-    socket.join(code);
-    userRoom = code;
+    // Jika player sudah jawab benar di round ini, ignore jawaban berikutnya
+    if (player.lastCorrectRound === room.roundIndex) {
+      socket.emit("guessResult", { correct: true, already: true, points: 0 });
 
-    room.players.set(socket.id, {
-      id: socket.id,
-      nickname: name,
-      score: 0,
-      lastCorrectRound: -1,
-      ready: false,
-    });
+      // Cek apakah semua player sudah jawab (untuk auto-advance)
+      if (checkAllAnswered(userRoom)) {
+        setTimeout(() => endRound(userRoom), 1000); // Delay 1s untuk feedback
+      }
+      return;
+    }
+
+    const q = currentQuestion(room);
+    if (!q) return;
+
+    // Cek apakah jawaban benar (compare dengan correctAnswer: A/B/C/D)
+    const isCorrect = normalize(answer) === normalize(q.correctAnswer);
+
+    if (isCorrect) {
+      // Jawaban benar! Hitung poin berdasarkan kecepatan
+      const elapsedMs = Date.now() - room.roundStartTime; // Waktu dari mulai round
+      const elapsedSeconds = Math.floor(elapsedMs / 1000); // Convert ke detik
+      const points = calculatePoints(elapsedSeconds); // Hitung poin (10, 8, 6, 4, 2, atau 0)
+
+      player.score += points; // Tambahkan poin ke total score
+      player.lastCorrectRound = room.roundIndex; // Mark sudah jawab benar di round ini
+
+      // Kirim hasil ke player (benar + poin yang didapat)
+      socket.emit("guessResult", {
+        correct: true,
+        points: points,
+        elapsedSeconds: elapsedSeconds,
+      });
+
+      emitScoreboard(userRoom); // Update scoreboard ke semua player
+    } else {
+      // Jawaban salah
+      socket.emit("guessResult", { correct: false, points: 0 });
+    }
+
+    // Cek apakah semua player sudah jawab (auto-advance feature)
+    if (checkAllAnswered(userRoom)) {
+      setTimeout(() => endRound(userRoom), 1500); // Delay 1.5s untuk feedback, lalu next round
+    }
+  });
+    
+  
+
+  // ============================================
+  // EVENT: PLAY AGAIN (restart game)
+  // ============================================
+  // Handler saat player klik "Main Lagi" di game over screen
+  socket.on("playAgain", () => {
+    if (!userRoom) return;
+    restartGame(userRoom); // Reset semua state game
+  });
+
+  // ============================================
+  // EVENT: REQUEST STATE (sync state)
+  // ============================================
+  // Handler saat client request state update (untuk sync setelah mount)
+  socket.on("requestState", () => {
+    if (!userRoom) return;
+    const room = rooms.get(userRoom);
+    if (!room) return;
+
+    // Kirim ulang scoreboard dan players state terbaru
+    emitScoreboard(userRoom);
+    emitPlayersState(userRoom);
+  });
+
+
+  
