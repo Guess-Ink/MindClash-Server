@@ -263,4 +263,60 @@ function startRound(roomCode, index) {
   broadcastRoundStart(roomCode);
  
   emitScoreboard(roomCode);
+
+  clearInterval(room.timerInterval);
+  room.timerInterval = setInterval(() => {
+    const msLeft = Math.max(0, room.roundDeadline - Date.now());
+    const secondsLeft = Math.ceil(msLeft / 1000);
+    io.to(roomCode).emit("timer", secondsLeft); 
+    if (msLeft <= 0) {
+      endRound(roomCode); 
+    }
+  }, 1000);
+}
+
+
+function checkAllAnswered(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room || room.players.size === 0) return false;
+
+
+  for (const p of room.players.values()) {
+    if (!p.hasAnswered) return false;
+  }
+  return true; 
+}
+
+function endRound(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+
+  clearInterval(room.timerInterval);
+  room.timerInterval = null;
+  room.roundActive = false;
+
+  const next = room.roundIndex + 1;
+  if (next < room.questions.length) {
+  
+    setTimeout(() => startRound(roomCode, next), 1500);
+  } else {
+   
+    room.gameEnded = true;
+    room.gameStarted = false;
+
+    const finalScoreboard = Array.from(room.players.values())
+      .map((p) => ({ id: p.id, nickname: p.nickname, score: p.score }))
+      .sort(
+        (a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname)
+      );
+
+ 
+    io.to(roomCode).emit("gameOver", {
+      totalRounds: room.questions.length,
+      finalScoreboard: finalScoreboard,
+    });
+
+   
+    emitPlayersState(roomCode);
+  }
 }
