@@ -198,4 +198,65 @@ function endRound(roomCode) {
       }
       return;
     }
+
+    const q = currentQuestion(room);
+    if (!q) return;
+
+    // Cek apakah jawaban benar (compare dengan correctAnswer: A/B/C/D)
+    const isCorrect = normalize(answer) === normalize(q.correctAnswer);
+
+    if (isCorrect) {
+      // Jawaban benar! Hitung poin berdasarkan kecepatan
+      const elapsedMs = Date.now() - room.roundStartTime; // Waktu dari mulai round
+      const elapsedSeconds = Math.floor(elapsedMs / 1000); // Convert ke detik
+      const points = calculatePoints(elapsedSeconds); // Hitung poin (10, 8, 6, 4, 2, atau 0)
+
+      player.score += points; // Tambahkan poin ke total score
+      player.lastCorrectRound = room.roundIndex; // Mark sudah jawab benar di round ini
+
+      // Kirim hasil ke player (benar + poin yang didapat)
+      socket.emit("guessResult", {
+        correct: true,
+        points: points,
+        elapsedSeconds: elapsedSeconds,
+      });
+
+      emitScoreboard(userRoom); // Update scoreboard ke semua player
+    } else {
+      // Jawaban salah
+      socket.emit("guessResult", { correct: false, points: 0 });
+    }
+
+    // Cek apakah semua player sudah jawab (auto-advance feature)
+    if (checkAllAnswered(userRoom)) {
+      setTimeout(() => endRound(userRoom), 1500); // Delay 1.5s untuk feedback, lalu next round
+    }
   });
+    
+  
+
+  // ============================================
+  // EVENT: PLAY AGAIN (restart game)
+  // ============================================
+  // Handler saat player klik "Main Lagi" di game over screen
+  socket.on("playAgain", () => {
+    if (!userRoom) return;
+    restartGame(userRoom); // Reset semua state game
+  });
+
+  // ============================================
+  // EVENT: REQUEST STATE (sync state)
+  // ============================================
+  // Handler saat client request state update (untuk sync setelah mount)
+  socket.on("requestState", () => {
+    if (!userRoom) return;
+    const room = rooms.get(userRoom);
+    if (!room) return;
+
+    // Kirim ulang scoreboard dan players state terbaru
+    emitScoreboard(userRoom);
+    emitPlayersState(userRoom);
+  });
+
+
+  
