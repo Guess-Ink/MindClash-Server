@@ -650,6 +650,9 @@ io.on("connection", (socket) => {
     if (!room) return;
 
     const roomCode = userRoom; // Simpan reference sebelum reset
+    
+    // Cek apakah user yang keluar adalah room creator
+    const wasCreator = room.roomCreator === socket.id;
 
     // Hapus player dari room
     room.players.delete(socket.id);
@@ -658,15 +661,29 @@ io.on("connection", (socket) => {
     // Leave dari socket.io room (stop menerima broadcast)
     socket.leave(roomCode);
 
-    // Update state untuk pemain yang masih ada di room
-    emitScoreboard(roomCode);
-    emitPlayersState(roomCode);
-
     // Reset userRoom untuk socket ini
     userRoom = null;
 
-    // Cleanup: hapus room jika sudah kosong (tidak ada player)
-    if (room.players.size === 0) {
+    // Jika room masih ada player
+    if (room.players.size > 0) {
+      // Jika creator keluar, transfer ke player pertama yang tersisa
+      if (wasCreator) {
+        const newCreator = Array.from(room.players.keys())[0];
+        room.roomCreator = newCreator;
+        console.log(`Room creator transferred from ${socket.id} to ${newCreator} (via leaveRoom)`);
+        
+        // Notify semua player tentang creator baru
+        io.to(roomCode).emit("creatorChanged", {
+          newCreatorId: newCreator,
+          message: "Pembuat room keluar. Creator baru telah ditunjuk.",
+        });
+      }
+
+      // Update state untuk pemain yang masih ada di room
+      emitScoreboard(roomCode);
+      emitPlayersState(roomCode);
+    } else {
+      // Cleanup: hapus room jika sudah kosong (tidak ada player)
       clearInterval(room.timerInterval); // Stop timer jika ada
       rooms.delete(roomCode); // Hapus room dari Map
       console.log("room deleted (empty after leave)", roomCode);
@@ -681,19 +698,36 @@ io.on("connection", (socket) => {
     if (userRoom) {
       const room = rooms.get(userRoom);
       if (room) {
+        // Cek apakah user yang disconnect adalah room creator
+        const wasCreator = room.roomCreator === socket.id;
+        
         // Hapus player dari room
         room.players.delete(socket.id);
 
-        // Update state untuk pemain yang masih ada
-        emitScoreboard(userRoom);
-        emitPlayersState(userRoom);
-        console.log("user disconnected", socket.id, "from room", userRoom);
+        // Jika room masih ada player
+        if (room.players.size > 0) {
+          // Jika creator keluar, transfer ke player pertama yang tersisa
+          if (wasCreator) {
+            const newCreator = Array.from(room.players.keys())[0];
+            room.roomCreator = newCreator;
+            console.log(`Room creator transferred from ${socket.id} to ${newCreator}`);
+            
+            // Notify semua player tentang creator baru
+            io.to(userRoom).emit("creatorChanged", {
+              newCreatorId: newCreator,
+              message: "Pembuat room keluar. Creator baru telah ditunjuk.",
+            });
+          }
 
-        // Cleanup: hapus room jika sudah kosong
-        if (room.players.size === 0) {
+          // Update state untuk pemain yang masih ada
+          emitScoreboard(userRoom);
+          emitPlayersState(userRoom);
+          console.log("user disconnected", socket.id, "from room", userRoom);
+        } else {
+          // Cleanup: hapus room jika sudah kosong
           clearInterval(room.timerInterval); // Stop timer
           rooms.delete(userRoom); // Hapus room dari Map
-          console.log("room deleted", userRoom);
+          console.log("room deleted (no players left)", userRoom);
         }
       }
     }
