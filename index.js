@@ -324,3 +324,34 @@ function checkAllReady(roomCode) {
   }
   return true;
 }
+
+io.on("connection", (socket) => {
+  console.log("a user connected", socket.id);
+  let userRoom = null;
+
+  socket.on("join", ({ nickname, roomCode }) => {
+    const name = (nickname || "").toString().trim() || "Pemain";
+    const code = (roomCode || "").toString().trim().toUpperCase() || "DEFAULT";
+
+    const room = getOrCreateRoom(code);
+    if (room.players.size >= MAX_PLAYERS_PER_ROOM) {
+      socket.emit("joinError", {
+        message: "Room penuh! Maksimal 10 pemain per room.",
+      });
+      return;
+    }
+
+    if (room.players.size === 0) {
+      room.roomCreator = socket.id;
+    }
+
+    socket.join(code);
+    userRoom = code;
+
+    room.players.set(socket.id, {
+      id: socket.id,
+      nickname: name,
+      score: 0,
+      lastCorrectRound: -1,
+      ready: false,
+    });
