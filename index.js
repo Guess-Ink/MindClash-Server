@@ -4,7 +4,6 @@ const { createServer } = require("node:http");
 const { Server } = require("socket.io");
 const OpenAI = require("openai");
 
-
 const app = express();
 const server = createServer(app);
 
@@ -36,7 +35,7 @@ function calculatePoints(elapsedSeconds) {
   if (elapsedSeconds < 5) return 10; 
   if (elapsedSeconds < 10) return 8; 
   if (elapsedSeconds < 15) return 6; 
-  if (elapsedSeconds < 20) return 4; 
+  if (elapsedSeconds < 20) return 4;
   if (elapsedSeconds < 30) return 2;
   return 0;
 }
@@ -80,7 +79,7 @@ PENTING:
     });
 
     const content = completion.choices[0].message.content.trim();
-    
+
     const jsonContent = content
       .replace(/```json\n?/g, "")
       .replace(/```\n?/g, "")
@@ -159,7 +158,7 @@ function normalize(text) {
 function getOrCreateRoom(roomCode) {
   if (!rooms.has(roomCode)) {
     rooms.set(roomCode, {
-      players: new Map(),
+      players: new Map(), 
       roundIndex: 0,
       roundActive: false,
       roundDeadline: 0,
@@ -174,4 +173,154 @@ function getOrCreateRoom(roomCode) {
     });
   }
   return rooms.get(roomCode);
+}
+
+function currentQuestion(room) {
+  return room.questions[room.roundIndex] || null;
+}
+
+function emitScoreboard(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+  const scoreboard = Array.from(room.players.values())
+    .map((p) => ({ id: p.id, nickname: p.nickname, score: p.score }))
+    .sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname));
+
+  io.to(roomCode).emit("scoreboard", scoreboard);
+}
+
+function emitPlayersState(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+  const players = Array.from(room.players.values()).map((p) => ({
+    id: p.id,
+    nickname: p.nickname,
+    ready: p.ready || false,
+  }));
+
+  io.to(roomCode).emit("playersState", {
+    players,
+    gameStarted: room.gameStarted,
+    gameEnded: room.gameEnded,
+    theme: room.theme,
+    quizReady: room.quizReady,
+    isCreator: false,
+  });
+}
+
+function broadcastRoundStart(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+  const q = currentQuestion(room);
+  if (!q) return;
+
+  io.to(roomCode).emit("round", {
+    index: room.roundIndex + 1,
+    total: room.questions.length,
+    question: q.question,
+    options: q.options,
+  });
+  
+  const msLeft = Math.max(0, room.roundDeadline - Date.now());
+  io.to(roomCode).emit("timer", Math.ceil(msLeft / 1000));
+}
+
+function startRound(roomCode, index) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+
+  room.roundIndex = index;
+  room.roundActive = true;
+  room.roundStartTime = Date.now();
+  room.roundDeadline = room.roundStartTime + ROUND_DURATION_MS;
+
+  for (const p of room.players.values()) {
+    if (typeof p.lastCorrectRound !== "number") p.lastCorrectRound = -1;
+    p.hasAnswered = false;
+  }
+
+  broadcastRoundStart(roomCode);
+
+  emitScoreboard(roomCode);
+
+  clearInterval(room.timerInterval);
+  room.timerInterval = setInterval(() => {
+    const msLeft = Math.max(0, room.roundDeadline - Date.now());
+    const secondsLeft = Math.ceil(msLeft / 1000);
+    io.to(roomCode).emit("timer", secondsLeft);
+    if (msLeft <= 0) {
+      endRound(roomCode);
+    }
+  }, 1000);
+}
+
+function checkAllAnswered(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room || room.players.size === 0) return false;
+
+  for (const p of room.players.values()) {
+    if (!p.hasAnswered) return false;
+  }
+  return true;
+}
+
+function endRound(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+
+  clearInterval(room.timerInterval);
+  room.timerInterval = null;
+  room.roundActive = false;
+
+  const next = room.roundIndex + 1;
+  if (next < room.questions.length) {
+    setTimeout(() => startRound(roomCode, next), 1500);
+  } else {
+    room.gameEnded = true;
+    room.gameStarted = false;
+
+    const finalScoreboard = Array.from(room.players.values())
+      .map((p) => ({ id: p.id, nickname: p.nickname, score: p.score }))
+      .sort(
+        (a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname)
+      );
+
+    io.to(roomCode).emit("gameOver", {
+      totalRounds: room.questions.length,
+      finalScoreboard: finalScoreboard,
+    });
+
+    emitPlayersState(roomCode);
+  }
+}
+
+function restartGame(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+
+  room.gameStarted = false;
+  room.gameEnded = false;
+  room.roundIndex = 0;
+  room.quizReady = false;
+  room.theme = null;
+  room.questions = [];
+
+  for (const p of room.players.values()) {
+    p.score = 0;
+    p.lastCorrectRound = -1;
+    p.ready = false;
+  }
+
+  emitScoreboard(roomCode);
+  emitPlayersState(roomCode);
+}
+
+function checkAllReady(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room || room.players.size === 0) return false;
+
+  for (const p of room.players.values()) {
+    if (!p.ready) return false;
+  }
+  return true;
 }
