@@ -36,8 +36,6 @@ app.get("/", (req, res) => {
   res.send("<h1>Quiz Game Server OK</h1>");
 });
 
-// ====== WELDY 1 =======================
-
 // ============================================
 // GAME CONFIGURATION
 // ============================================
@@ -66,8 +64,6 @@ function calculatePoints(elapsedSeconds) {
   if (elapsedSeconds < 30) return 2; // Jawab < 30 detik: 2 poin
   return 0; // Timeout atau tidak menjawab: 0 poin
 }
-
-// ======= WELDY 2 ======================
 
 // ============================================
 // OPENAI QUIZ GENERATOR
@@ -186,7 +182,6 @@ PENTING:
   }
 }
 
-// ========== AHMAD 1 & 2==========================
 
 // ============================================
 // ROOM MANAGEMENT & GAME STATE
@@ -203,8 +198,6 @@ const rooms = new Map();
 function normalize(text) {
   return (text || "").toString().trim().toLowerCase();
 }
-
-// ======== RAHMAD 1 ====================
 
 // Fungsi untuk mendapatkan atau membuat room baru
 function getOrCreateRoom(roomCode) {
@@ -228,8 +221,6 @@ function getOrCreateRoom(roomCode) {
   return rooms.get(roomCode);
 }
 
-// ========== RAHMAD 2 ==========================
-
 // Fungsi untuk mendapatkan soal saat ini dari room
 function currentQuestion(room) {
   return room.questions[room.roundIndex] || null;
@@ -251,8 +242,6 @@ function emitScoreboard(roomCode) {
   io.to(roomCode).emit("scoreboard", scoreboard);
 }
 
-// ============= FAWWAZ 1 ==========================
-
 // Fungsi untuk mengirim state players (list pemain, status ready, dll) ke semua player di room
 function emitPlayersState(roomCode) {
   const room = rooms.get(roomCode);
@@ -273,11 +262,6 @@ function emitPlayersState(roomCode) {
     isCreator: false, // Default false, akan diset per-socket di handler join
   });
 }
-
-// ============== FAWWAZ 2 ==========================
-
-// ============================================DAY 1 ============================================
-
 
 // ============================================
 // ROUND MANAGEMENT
@@ -322,8 +306,6 @@ function startRound(roomCode, index) {
   broadcastRoundStart(roomCode);
   // Kirim scoreboard terbaru
   emitScoreboard(roomCode);
-
-  //  WELDY 1 ====================
 
   // Setup countdown timer (update setiap 1 detik)
   clearInterval(room.timerInterval);
@@ -386,8 +368,6 @@ function endRound(roomCode) {
   }
 }
 
-// WELDY 2 ====================
-
 // ============================================
 // GAME RESTART & READY CHECK
 // ============================================
@@ -429,7 +409,6 @@ function checkAllReady(roomCode) {
   return true; // Semua sudah ready
 }
 
-// RAHMAD 1 ====================
 
 // ============================================
 // SOCKET.IO CONNECTION & EVENT HANDLERS
@@ -474,7 +453,6 @@ io.on("connection", (socket) => {
       ready: false, // Belum ready
     });
 
-// RAHMAD 2 ====================
   
 
     // Kirim konfirmasi join ke client dengan info isCreator
@@ -538,7 +516,6 @@ io.on("connection", (socket) => {
     emitPlayersState(userRoom); // Update state (quizReady = true)
   });
 
-  // FAWWAZ 1 ====================
 
   // ============================================
   // EVENT: READY (player siap mulai game)
@@ -603,8 +580,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // FAWWAZ 2 ====================
-
     // Ambil soal saat ini
     const q = currentQuestion(room);
     if (!q) return;
@@ -662,3 +637,73 @@ io.on("connection", (socket) => {
     emitScoreboard(userRoom);
     emitPlayersState(userRoom);
   });
+
+
+  // ============================================
+  // EVENT: LEAVE ROOM (user klik "Selesai")
+  // ============================================
+  // Handler saat player klik tombol "Selesai" untuk keluar dari room
+  socket.on("leaveRoom", () => {
+    if (!userRoom) return;
+    const room = rooms.get(userRoom);
+    if (!room) return;
+
+    const roomCode = userRoom; // Simpan reference sebelum reset
+
+    // Hapus player dari room
+    room.players.delete(socket.id);
+    console.log("user left room", socket.id, "from room", roomCode);
+
+    // Leave dari socket.io room (stop menerima broadcast)
+    socket.leave(roomCode);
+
+    // Update state untuk pemain yang masih ada di room
+    emitScoreboard(roomCode);
+    emitPlayersState(roomCode);
+
+    // Reset userRoom untuk socket ini
+    userRoom = null;
+
+    // Cleanup: hapus room jika sudah kosong (tidak ada player)
+    if (room.players.size === 0) {
+      clearInterval(room.timerInterval); // Stop timer jika ada
+      rooms.delete(roomCode); // Hapus room dari Map
+      console.log("room deleted (empty after leave)", roomCode);
+    }
+  });
+
+  // ============================================
+  // EVENT: DISCONNECT (user close tab/browser)
+  // ============================================
+  // Handler saat user disconnect (close tab, lost connection, dll)
+  socket.on("disconnect", () => {
+    if (userRoom) {
+      const room = rooms.get(userRoom);
+      if (room) {
+        // Hapus player dari room
+        room.players.delete(socket.id);
+
+        // Update state untuk pemain yang masih ada
+        emitScoreboard(userRoom);
+        emitPlayersState(userRoom);
+        console.log("user disconnected", socket.id, "from room", userRoom);
+
+        // Cleanup: hapus room jika sudah kosong
+        if (room.players.size === 0) {
+          clearInterval(room.timerInterval); // Stop timer
+          rooms.delete(userRoom); // Hapus room dari Map
+          console.log("room deleted", userRoom);
+        }
+      }
+    }
+  });
+});
+
+// ============================================
+// START SERVER
+// ============================================
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
+server.listen(PORT, () => {
+  console.log(`server running at http://localhost:${PORT}`);
+  console.log(`Rooms will be created on-demand when users join`);
+});
